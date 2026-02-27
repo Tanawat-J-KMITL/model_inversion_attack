@@ -29,7 +29,8 @@ def run_attack(args):
     SIGMA       = 0.07      # Explore rate
     DECAY       = 0.50      # Learning & explore decay (breaking)
     STEPS       = 3000      # How many steps to train the inversion model
-    CUT_LOSS    = -0.0006   # Reduce learning rate threshold
+    MAX_LOSS    = 3         # How many losses will it count
+    CUT_LOSS    = -0.001   # Reduce learning rate threshold
     EARLY_STOP  = 0.90      # Early stop % 
 
     # --------------------------- #
@@ -45,6 +46,7 @@ def run_attack(args):
     sigma = SIGMA
     min_lr = LR / 10
     min_sigma = SIGMA / 10
+    losses = 0
 
     # Restore point
     best_state = None
@@ -96,42 +98,48 @@ def run_attack(args):
         velocity = BETA * velocity + grad_estimate
         generated = (generated + lr * velocity).clamp(0, 1)
 
-        new_score = query_server(generated)
-        loss_delta = high_score - new_score
+        current_score = query_server(generated)
 
-        if new_score > high_score:
-            high_score = new_score
+        # ---- EARLY STOP ----
+        if current_score >= EARLY_STOP:
+            print(f"\nEarly stopping at step {step} — reached {current_score:.4f} confidence.")
+            break
+    
+        loss_delta = high_score - current_score
+
+        if current_score > high_score:
+            losses = 0
+            high_score = current_score
             best_state = {
                 "generated": generated.detach().clone(),
                 "best_score": high_score if high_score > high_score else high_score
             }
 
         if loss_delta > CUT_LOSS:
-            # Restore data
-            print("\nRegression detected! Restoring highest score snopshot...\r", end="")
-            CUT_LOSS *= 0.75
-            generated = best_state["generated"].clone()
-            velocity = torch.zeros_like(generated)
-            high_score = 0.0
-            # Re-calculate generation
-            lr = max(min_lr, lr * DECAY)
-            sigma = max(min_sigma, sigma * DECAY)
-            grad_estimate = torch.zeros_like(generated)
-            velocity = BETA * velocity + grad_estimate
-            generated = (generated + lr * velocity).clamp(0, 1)
+            if losses < MAX_LOSS:
+                losses += 1
+            else:
+                # Restore data
+                print("\nRegression detected! Restoring highest score snopshot...\r", end="")
+                CUT_LOSS *= 0.5
+                loss_delta = CUT_LOSS
+                generated = best_state["generated"].clone()
+                velocity = torch.zeros_like(generated)
+                high_score = 0.0
+                losses = 0
+                # Re-calculate generation
+                lr = max(min_lr, lr * DECAY)
+                sigma = max(min_sigma, sigma * DECAY)
+                grad_estimate = torch.zeros_like(generated)
+                velocity = BETA * velocity + grad_estimate
+                generated = (generated + lr * velocity).clamp(0, 1)
 
         if high_score == 0.0:
             print("\033[n\x1b[2K* Waiting for data...\r", end="")
         else:
             vel_mag = torch.norm(velocity)
             print(f"\033[n\x1b[2K* [{step + 1}/{STEPS}]: Accuracy {high_score * 100:.3f}% (α={lr:.6f}, ‖v‖₂={vel_mag.item():.6f}, σ={sigma:.6f})", end="\r\n")
-            print(f"\033[n\x1b[2K< loss delta: {loss_delta:.6f} | best {best_state["best_score"] * 100:.3f}% >\r\033[F", end="")
-
-        current_score = score
-        # ---- EARLY STOP ----
-        if current_score >= EARLY_STOP:
-            print(f"\nEarly stopping at step {step} — reached {current_score:.4f} confidence.")
-            break
+            print(f"\033[n\x1b[2K< loss delta: {loss_delta:.6f} | best: {best_state["best_score"] * 100:.3f}% | losses: {losses} >\r\033[F", end="")
 
     print("\033[?25h")
 
