@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Secure Banking Login</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .login-card {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            width: 400px;
+            text-align: center;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            color: #2c5364;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+
+        video {
+            width: 160px;
+            height: 160px;
+            border-radius: 8px;
+            margin-top: 10px;
+            object-fit: cover;
+        }
+
+        canvas {
+            display: none;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            border: none;
+            border-radius: 5px;
+            background-color: #2c5364;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #203a43;
+        }
+
+        .status {
+            margin-top: 15px;
+            font-size: 14px;
+            color: red;
+        }
+    </style>
+</head>
+<body>
+
+<div class="login-card">
+    <h1>Bank Login</h1>
+
+    <input type="text" id="user_id" placeholder="Enter User ID" required>
+
+    <video id="video" autoplay width="160" height="160"></video>
+    <canvas id="canvas"></canvas>
+
+    <button onclick="capture()">Capture Face</button>
+    <button onclick="login()">Login</button>
+
+    <div class="status" id="status"></div>
+</div>
+
+<script>
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const statusText = document.getElementById("status");
+    const root = "/proxy/8000";
+
+    let capturedBlob = null;
+
+    // Start webcam
+    navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => {
+            video.srcObject = stream;
+        })
+        .catch(err => {
+            statusText.innerText = "Webcam access denied.";
+        });
+
+    function capture() {
+        const context = canvas.getContext("2d");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0);
+
+        canvas.toBlob(function(blob) {
+            capturedBlob = blob;
+            statusText.style.color = "green";
+            statusText.innerText = "Face captured successfully.";
+        }, "image/jpeg");
+    }
+
+    async function login() {
+        const userId = document.getElementById("user_id").value;
+
+        if (!userId) {
+            statusText.style.color = "red";
+            statusText.innerText = "Please enter User ID.";
+            return;
+        }
+
+        if (!capturedBlob) {
+            statusText.style.color = "red";
+            statusText.innerText = "Please capture your face first.";
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("file", capturedBlob, "capture.jpg");
+
+        statusText.style.color = "black";
+        statusText.innerText = "Authenticating...";
+
+        const response = await fetch(`${root}/api/v1/auth/${userId}`, {
+            method: "POST",
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.authenticated) {
+            window.location.href = root + "/dashboard";
+        } else {
+            statusText.style.color = "red";
+            statusText.innerText = "Authentication failed.";
+        }
+    }
+</script>
+
+</body>
+</html>

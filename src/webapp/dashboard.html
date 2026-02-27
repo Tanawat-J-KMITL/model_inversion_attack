@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bank Dashboard</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #1d4350, #a43931);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .dashboard-card {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+            width: 500px;
+            text-align: center;
+        }
+
+        h1 {
+            margin-bottom: 10px;
+            color: #1d4350;
+        }
+
+        .subtitle {
+            font-size: 18px;
+            margin-bottom: 30px;
+            color: #555;
+        }
+
+        .highlight {
+            font-weight: bold;
+            color: #a43931;
+        }
+
+        .info-box {
+            background: #f4f6f8;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+        }
+
+        button {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 6px;
+            background-color: #1d4350;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #16333c;
+        }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-card">
+    <h1>🏦 Totally <span class="highlight">"Safe"</span> Banking Website!</h1>
+
+    <div class="subtitle">
+        Welcome to your secure biometric banking portal.
+    </div>
+
+    <div class="info-box">
+        <p>✔️ Military-grade AI authentication</p>
+        <p>✔️ Advanced biometric verification</p>
+        <p>✔️ Absolutely no information leakage*</p>
+    </div>
+
+    <button onclick="logout()">Logout</button>
+</div>
+
+<script>
+    const root = "/proxy/8000";
+    function logout() {
+        window.location.href = root + "/api/v1/logout";
+    }
+</script>
+
+</body>
+</html>
