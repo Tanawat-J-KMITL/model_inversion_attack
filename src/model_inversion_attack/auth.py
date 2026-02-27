@@ -8,7 +8,7 @@ from model_inversion_attack import model
 THRESHOLD = 0.82
 
 
-def auth(img, user_id):
+async def auth(img, user_id):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     face_model = model.BankingFaceModel(device)
